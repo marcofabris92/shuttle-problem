@@ -3,7 +3,7 @@ Code reproducing the numerical simulations of the paper "Optimization Methods fo
 
 To change scenario, open stubFunction.m and go to line 28. Then pass parameters on your choice to inhomogeneous_poisson_generation(). E.g.:
 
-% Scenario a: 
+% Scenario a (default setting): 
 radius = 10000; % Legnaro = centr
 [vx,vy] = voronoi(stops_xy(:,1),stops_xy(:,2));
 lambda = lambda_values(lv)\*Q / (pi\*radius^2);
@@ -17,6 +17,6 @@ lambda = lambda_values(lv)\*Q / (pi\*radius^2);
 M = 3;
 [xx,yy] = disomogeneous_poisson_generation(radius,-1.5162\*1e4,0.6144\*1e4,lambda,M); % Padua station = decentr
 
-In addition, parameter beta can be modified at line 85 of stubFunction.m
+In addition, parameter beta can be modified at line 85 of stubFunction.m (default: beta = 1)
 
 Finally, in MAIN.m, simulations paramters can be tuned at line 86.
