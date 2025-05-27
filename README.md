@@ -19,4 +19,4 @@ M = 3;
 
 In addition, parameter beta can be modified at line 85 of stubFunction.m (default: beta = 1)
 
-Finally, in MAIN.m, simulations paramters can be tuned at line 86.
+Finally, in MAIN.m, simulations paramters can be tuned at line 86. The same file is used to run Monte Carlo simulations.
