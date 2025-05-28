@@ -1,6 +1,8 @@
 # shuttle-problem
 Code reproducing the numerical simulations of the paper "Optimization Methods for a Shuttle Bus Routing Problem arising in Urban Mobility"
 
+Requires the installation of the Gurobi Optimizer along with Matlab
+
 To change scenario, open stubFunction.m and go to line 28. Then pass parameters on your choice to inhomogeneous_poisson_generation(). E.g.:
 
 % Scenario a (default setting): 
