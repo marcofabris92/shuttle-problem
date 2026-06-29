@@ -1,13 +1,17 @@
 function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
-    userServiceMatrix_MILP,userServiceMatrix_heuristic] = stubFunction(n_delta, ...
-    n_simulation,h,lambda_values_string,w,L,G,D,nn,lv,lambda_values,Q,D0,Adj, ...
-    DL0,dout,npred0,ne,nde,edge_list,save_lp_model)
+    userServiceMatrix_MILP,userServiceMatrix_heuristic,add_info_MILP,...
+    add_info_heuristic] = stubFunction(n_delta,n_simulation,h,lambda_values_string,...
+    w,L,DL,G,D,nn,lv,lambda_values,electric_ratio,electric_bus,pr,...
+    Q,D0,Adj,DL0,dout,npred0,ne,nde,edge_list,save_lp_model)
 
     Impact_matrix = zeros(n_simulation,1);
     Impact_heuristic_matrix = zeros(n_simulation,1);
     Impact_noBus_matrix = zeros(n_simulation,1);
-    userServiceMatrix_MILP = zeros(n_simulation,1,2);
-    userServiceMatrix_heuristic = zeros(n_simulation,1,2);
+    userServiceMatrix_MILP = zeros(n_simulation,2);
+    userServiceMatrix_heuristic = zeros(n_simulation,2);
+    add_info_MILP = zeros(n_simulation,14);
+    add_info_heuristic = zeros(n_simulation,5);
+
     hh = 1;
         while hh<=n_simulation
             % fprintf(['Lambda = ' lambda_values_string{lv} '*Q/A | Cycle '...
@@ -30,9 +34,17 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
             lambda = lambda_values(lv)*Q / (pi*radius^2);
             M = 5;
             [xx,yy] = inhomogeneous_poisson_generation(radius,-0.8771*1e4,-0.1668*1e4,lambda,M); % Legnaro = centr
+            %[xx,yy] = inhomogeneous_poisson_generation(radius,-1.5162*1e4,0.6144*1e4,lambda,M); % Padua station = decentr
             ntu = length(xx); % total number of users
-            delta_max = T/min(D0)-1;
-            delta = h*delta_max/(n_delta-1);
+            delta_max = T/max(D0(1:end-1))-1;
+            if n_delta > 1
+                delta = h*delta_max/(n_delta-1);
+            else
+                delta = pr*delta_max/10*9;
+                if delta > delta_max
+                    delta = delta_max;
+                end
+            end
             user_distributions = zeros(ntu,4); 
             % id number | which node | a | r
             already_served = [];
@@ -81,8 +93,12 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
             tot_users_per_node = sum(users_per_node);
             
             %% Impact weights
-            alpha = 0;
-            beta = 1;
+            alpha = 1;
+            beta_V = 162; % CO2_emissions
+            beta = beta_V/718; 
+            if electric_bus
+                beta = beta/0.25;
+            end
             qI = Adj;
             l0 = 18;
             liu = 4.5;
@@ -113,7 +129,20 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
                     end
                 end
             end
-            GammaI = -ones(nn,1);
+
+            % GammaI = -ones(nn,1);
+            L1 = L;
+            for i = 1:nn+1
+                for j = 1:nn+1
+                    if i ~= j && l0 > L(i,j)
+                        L1(i,j) = +Inf;
+                    end
+                end
+            end
+            DL1 = distances(digraph(L1));
+            zbar = 1;    % deposit node
+            GammaI = DL1(zbar,:)';
+
             max_impact = max_impact + alpha*sum(GammaI);
             mI = cell(nn,1);
             min_impact = 0;
@@ -121,10 +150,13 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
                 mI{i} = zeros(users_per_node(i),1);
                 for k = 1:users_per_node(i)
                     mI{i}(k) = DL0(i);
+                    if rand <= electric_ratio % e/(ne+e) <= electric_ratio
+                        mI{i}(k) = mI{i}(k)*0.25;
+                    end
                     min_impact = min_impact - mI{i}(k);
                 end
             end
-            min_impact_noBus = min_impact;
+            M0 = -min_impact;
             min_impact = beta*min_impact;
             % if loading_data
             %     load(filename);
@@ -178,7 +210,7 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
             pickedup_users = zeros(ntu,1);
             users_in_bus = 0;
             user_distrib_ordered = sortrows(user_distributions,3);
-            passengersPerStop = [P0(:,1), zeros(length(P0(:,1)),1)];
+            pickedPassengersPerStop = [P0(:,1), zeros(length(P0(:,1)),1)];
             for k = 1:ntu
                 i = user_distrib_ordered(k,2);
                 i_ = find(P0(:,1)==i);
@@ -186,18 +218,18 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
                     aik = ceil(user_distrib_ordered(k,3)/dta)*dta/60;
                     rik = user_distrib_ordered(k,4)/60;
                     if P0(i_,4) >= aik && P0(end,4)-aik <= rik && users_in_bus < Q ...
-                           && passengersPerStop(i_,2) < P0(i_,2)              
+                           && pickedPassengersPerStop(i_,2) < P0(i_,2)              
                         pickedup_users(k) = 1;
                         users_in_bus = users_in_bus + 1;
-                        passengersPerStop(i_,2) = passengersPerStop(i_,2)+1;
+                        pickedPassengersPerStop(i_,2) = pickedPassengersPerStop(i_,2)+1;
                     end
                 end
             end
             served_users = [pickedup_users...
                 user_distrib_ordered(:,1:2) user_distrib_ordered(:,3:4)/60];
             
-            userServiceMatrix_heuristic(hh,1,1) = sum(pickedup_users);
-            userServiceMatrix_heuristic(hh,1,2) = length(pickedup_users);
+            userServiceMatrix_heuristic(hh,1) = sum(pickedup_users);
+            userServiceMatrix_heuristic(hh,2) = length(pickedup_users);
             
             %-------------------------------------------------------------------------------------
             % fprintf('Heuristic approach\n')
@@ -270,23 +302,25 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
             
             
             %% MILP settings
+            warning('off','all')
             options = optimoptions('intlinprog');
             options.ConstraintTolerance = 1e-4;     % default: 1e-4
             options.CutGeneration = 'advanced';     % default: 'basic'
             options.CutMaxIterations = 10;          % default: 10
             % options.Display = 'iter';               % default: iter
-            options.Display = 'off';
+            options.Display = 'off'; 
             options.Heuristics = 'basic';           % default: 'basic'
             options.HeuristicsMaxNodes = 50;        % default: 50
             options.IntegerPreprocess = 'advanced'; % default: 'basic'
             options.IntegerTolerance = 1e-5;        % default: 1e-5
             options.MaxNodes = 1e7;                 % default: 1e7
-            options.MaxTime = 10*60;                % default: 7200
+            options.MaxTime = 30*60;                % default: 7200
             
             
             %% computation of the MILP solution (no initialization)
             % (i)
-            p = intlinprog_grb(f,intcon,A,b,Aeq,beq,lb,ub,[],options);
+            stage_1_tStart = tic;
+            [p,~,~,stage_1_out] = intlinprog_grb(f,intcon,A,b,Aeq,beq,lb,ub,[],options);
             Impact = zeros(nvar,1);
             k = 0;
             for i = 1:nn+1
@@ -310,8 +344,10 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
             % (ii)
             params.Impact = Impact'*p;
             stage_1_impact = params.Impact - min_impact;
+            stage_1_exeTime = toc(stage_1_tStart);
+            stage_2_tStart = tic;
             [f,intcon,A,b,Aeq,beq,lb,ub,nvar] = milp_model(params,2);
-            p = intlinprog_grb(f,intcon,A,b,Aeq,beq,lb,ub,[p; params.Impact],options);
+            [p,~,~,stage_2_out] = intlinprog_grb(f,intcon,A,b,Aeq,beq,lb,ub,[p; params.Impact],options);
             % (iii)
             Users = zeros(nvar,1);
             k = ne+ntc+2*nn+1;
@@ -323,11 +359,13 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
             end
             params.Impact = [Impact; 0]'*p;
             stage_2_impact = params.Impact - min_impact;
+            stage_2_exeTime = toc(stage_2_tStart);
+            stage_3_tStart = tic;
             params.Users = Users'*p;
             [f,intcon,A,b,Aeq,beq,lb,ub,nvar] = milp_model(params,3);
-            p = intlinprog_grb(f,intcon,A,b,Aeq,beq,lb,ub,[p; params.Users],options);
+            [p,~,~,stage_3_out] = intlinprog_grb(f,intcon,A,b,Aeq,beq,lb,ub,[p; params.Users],options);
             stage_3_impact = [Impact; 0; 0]'*p - min_impact;
-            
+            stage_3_exeTime = toc(stage_3_tStart);
             %-------------------------------------------------------------------------------------
             % % display solutions
             % fprintf('\nSolution by heuristics (node | #served users | #users at that node | departure [minutes]):\n')
@@ -336,12 +374,14 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
             % fprintf(['#picked-up users through heuristics: ' num2str(score) '\n'])
             %-------------------------------------------------------------------------------------
             %%
+
+            warning('on','all')
             try
     
-                [P,v] = MILP2human(p,params);
+                [P,v,Lp] = MILP2human(p,params);
                 
-                userServiceMatrix_MILP(hh,1,1) = sum(P(:,2));
-                userServiceMatrix_MILP(hh,1,2) = userServiceMatrix_heuristic(hh,1,2);
+                userServiceMatrix_MILP(hh,1) = sum(P(:,2));
+                userServiceMatrix_MILP(hh,2) = userServiceMatrix_heuristic(hh,2);
                 %-------------------------------------------------------------------------------------
                 % fprintf('\nSolution by MILP solver (node | #served users | #users at that node | departure [minutes]):\n')
                 % disp(P)
@@ -352,26 +392,70 @@ function [Impact_matrix,Impact_heuristic_matrix,Impact_noBus_matrix,...
                 %-------------------------------------------------------------------------------------
                 
                 %% impact comparison
+                % fprintf('Impact for MILP\n')
+                %stage_1_impact   
+                Dz0_MILP = alpha*DL(zbar,P(1,1));
+                M_star_MILP = 0;
+                Dv_MILP = 0;
+                for ii = 1:length(P(:,1))-1
+                    i = P(ii,1);
+                    j = P(ii+1,1);
+                    Dz0_MILP = Dz0_MILP + qI(i,j);
+                    % mI_i = 0;
+                    % if ~isempty(mI{i})
+                    %     mI_i = mI{i}(1);
+                    % end
+                    % M_star_MILP = M_star_MILP - P(ii,2)*mI_i;
+                end
+                for i = 1:nn
+                    idx = sum(users_per_node(1:i-1));
+                    for u = 1:users_per_node(i)
+                        M_star_MILP = M_star_MILP + mI{i}(u)*(1-v(idx+u));
+                        Dv_MILP = Dv_MILP + DL0(i)*(1-v(idx+u));
+                    end
+                end
+
                 % fprintf('\nImpact for the heuristic\n')
-                Impact_heuristic = -min_impact;
+                M_star_heuristic = M0;
+                Dz0_heuristic = alpha*DL(zbar,P0(1,1)); % impact from deposit to first stop
                 for ii = 1:length(P0(:,1))-1
                     i = P0(ii,1);
                     j = P0(ii+1,1);
-                    Impact_heuristic = Impact_heuristic + qI(i,j);
+                    Dz0_heuristic = Dz0_heuristic + qI(i,j);
                     mI_i = 0;
                     if ~isempty(mI{i})
                         mI_i = mI{i}(1);
                     end
-                    Impact_heuristic = Impact_heuristic - beta*passengersPerStop(ii,2)*mI_i;
+                    M_star_heuristic = M_star_heuristic - P0(ii,2)*mI_i;
                 end
-                %Impact_heuristic
                 
-                % fprintf('Impact for MILP\n')
-                %stage_1_impact   
+                % data saving
+                Impact_matrix(hh) = stage_3_impact;
+                Impact_heuristic_matrix(hh) = Dz0_heuristic+beta*M_star_heuristic;
+                Impact_noBus_matrix(hh) = beta*M0;
+                
+                add_info_MILP(hh,1) = Dz0_MILP; % [m]
+                add_info_MILP(hh,2) = M_star_MILP; % [m] 
+                add_info_MILP(hh,3) = M0; % [m]
+                add_info_MILP(hh,4) = P(1,1); % first stop of the bus
+                add_info_MILP(hh,5) = P(end,end); % time arrival at destionation [s]
+                add_info_MILP(hh,6) = stage_1_out.relativegap; 
+                add_info_MILP(hh,7) = stage_1_out.absolutegap; 
+                add_info_MILP(hh,8) = stage_1_exeTime; % [s]
+                add_info_MILP(hh,9) = stage_2_out.relativegap; 
+                add_info_MILP(hh,10) = stage_2_out.absolutegap;
+                add_info_MILP(hh,11) = stage_2_exeTime; % [s]
+                add_info_MILP(hh,12) = stage_3_out.relativegap; 
+                add_info_MILP(hh,13) = stage_3_out.absolutegap; 
+                add_info_MILP(hh,14) = stage_3_exeTime;  % [s]
+                add_info_MILP(hh,15) = Dv_MILP; % [m]
 
-                Impact_matrix(hh,1) = stage_3_impact;
-                Impact_heuristic_matrix(hh,1) = Impact_heuristic;
-                Impact_noBus_matrix(hh,1) = -min_impact_noBus;
+                add_info_heuristic(hh,1) = Dz0_heuristic; % [m] 
+                add_info_heuristic(hh,2) = M_star_heuristic; % [m] 
+                add_info_heuristic(hh,3) = M0; % [m] 
+                add_info_heuristic(hh,4) = P0(1,1); % first stop of the bus
+                add_info_heuristic(hh,5) = P0(end,end); % time arrival at destionation [s]
+
                 hh = hh+1;
             catch ME
                 disp(ME.message)

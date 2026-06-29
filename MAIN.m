@@ -1,14 +1,17 @@
 % SHUTTLE PROBLEM
-% M. Fabris, A. Zanella, R. Roberti, R. Carli, L. Boscolo Berto
-% May. 17, 2024
+% M. Fabris, A. Zanella, R. Roberti, L. Boscolo Berto
+% April 04, 2026
 
 clear all
 close all
 clc
 
-lambda_values = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 3.5, 4];
-lambda_values_string = {'025', '050', '075', '100', '125', '150', '175',...
-    '200', '250', '300', '350', '400'};
+electric_ratio = 0;
+electric_bus = 0;
+
+lambda_values = [0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
+lambda_values_string = {'005', '010', '025', '050', '100', '150',...
+   '200', '250', '300', '350', '400'};
 
 if length(lambda_values) ~= length(lambda_values_string)
     error("Length of the lambda values is different");
@@ -17,11 +20,11 @@ end
 for lv = 1:length(lambda_values)
     fprintf('Time: %s | Lambda = %s*Q/A \n', datestr(now, 'HH:MM:SS'),lambda_values_string{lv});
 
-    clearvars -except lv lambda_values lambda_values_string
+    clearvars -except lv lambda_values lambda_values_string electric_ratio electric_bus
 
     save_lp_model = 0;
     loading_data = 0;
-    addpath '/home/marcof/gurobi1202/linux64/matlab/';
+    addpath 'C:\gurobi1301\win64\matlab'; % change this path to your Gurobi folder
     
     % shuttle capacity
     Q = 100;
@@ -29,12 +32,10 @@ for lv = 1:length(lambda_values)
     
     %% Topology
   
-    % % spatial distances 
-     %[m]
+    % spatial distances in [m]
     L = 1000*table2array(readtable('Adjacency_matrix.csv'));
     
-    % % temporal distances: (i,j) means time from node i to node j
-     %[s]
+    % temporal distances in [s]: (i,j) means time from node i to node j
     w = L/(40/3.6); % average speed = 40 km/h
      
     G = digraph(w);
@@ -47,6 +48,17 @@ for lv = 1:length(lambda_values)
     D0 = D(:,end);      %[s]
     DL0 = DL(:,end);    %[m]
     DL0M = max(DL0);    %[m]
+    DL0M
+    error('stop')
+
+    Fc = 72; % fixed cost for the service in €
+    Kc = 1.22; % cost for the service in €/Km
+    PRICE_REF = (Fc + Kc * DL0M/1000 * ...
+        (1 + sqrt(nn*pi)/sqrt(lambda_values(lv)*Q)) )/ Q;
+    phi = 1;
+    PRICE = phi*PRICE_REF;
+    pr = 1/phi;
+
     D = D(1:end-1,:);
     dout = outdegree(G);
     npred0 = length(predecessors(G,nn));
@@ -83,28 +95,32 @@ for lv = 1:length(lambda_values)
     end
      
     %% Cycle for different values of lambda
-    n_delta = 5; %10;  
+    n_delta = 1; %10;  
     n_simulation = 10; %100;
-    Impact_matrix = zeros(n_simulation,n_delta);
+    Impact_matrix = zeros(n_simulation,n_delta); % MILP solution
     Impact_heuristic_matrix = zeros(n_simulation,n_delta);
     Impact_noBus_matrix = zeros(n_simulation,n_delta);
     userServiceMatrix_MILP = zeros(n_simulation, n_delta,2);
     userServiceMatrix_heuristic = zeros(n_simulation, n_delta,2);
+    add_info_MILP = zeros(n_simulation, n_delta,15);
+    add_info_heuristic = zeros(n_simulation, n_delta,5);
 
     parfor h = 0:n_delta-1
-        [I_m, I_h_m, I_b_m, u_M, u_h] = stubFunction(n_delta, ...
-            n_simulation,h,lambda_values_string,w,L,G,D,nn,lv, ...
-            lambda_values,Q,D0,Adj,DL0,dout,npred0,ne,nde,edge_list,save_lp_model);
+        [I_m, I_h_m, I_b_m, u_M, u_h, a_M, a_h] = stubFunction(n_delta, ...
+            n_simulation,h,lambda_values_string,w,L,DL,G,D,nn,lv, ...
+            lambda_values,electric_ratio,electric_bus,pr, ...
+            Q,D0,Adj,DL0,dout,npred0,ne,nde,edge_list,save_lp_model);
         
-        Impact_matrix(:,h+1) = I_m(:);
-        Impact_heuristic_matrix(:,h+1) = I_h_m(:);
-        Impact_noBus_matrix(:,h+1) = I_b_m(:);
-        userServiceMatrix_MILP(:,h+1,:) = u_M(:,1,:);
-        userServiceMatrix_heuristic(:,h+1,:) = u_h(:,1,:);
+        Impact_matrix(:,h+1) = I_m;   % MILP solution
+        Impact_heuristic_matrix(:,h+1) = I_h_m;
+        Impact_noBus_matrix(:,h+1) = I_b_m;
+        userServiceMatrix_MILP(:,h+1,:) = u_M;
+        userServiceMatrix_heuristic(:,h+1,:) = u_h;
+        add_info_MILP(:,h+1,:) = a_M;
+        add_info_heuristic(:,h+1,:) = a_h;
     end 
         
-    savepath = sprintf('workspace1c/wrkspc_C_%sQ.mat', lambda_values_string{lv});
-
+    savepath = sprintf('workspace1L/wrkspc_L_%sQ.mat', lambda_values_string{lv});
     save(savepath)
 
 end % finish cycle with lv
